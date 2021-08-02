@@ -7,6 +7,7 @@ import time
 
 class Lemmatizer(object):  # pylint: disable=too-few-public-methods
     """Class for lemmatizing words. Inspired by the CST lemmatizer."""
+    _logger = logging.getLogger(__name__)
 
     def __init__(self, rules=None):
         """Initialize a lemmatizer using specified set of rules."""
@@ -43,10 +44,10 @@ class Lemmatizer(object):  # pylint: disable=too-few-public-methods
             old_rule_count = self._count_rules()
             self._train_epoch(X, y)
             rule_count = self._count_rules()
-            logging.debug("epoch #%s: %s rules (%s new) in %.2fs", epoch, rule_count, rule_count - old_rule_count,
+            self._logger.debug("epoch #%s: %s rules (%s new) in %.2fs", epoch, rule_count, rule_count - old_rule_count,
                           time.time() - epoch_start)
             epoch += 1
-        logging.debug("training complete: %s rules in %.2fs", rule_count, time.time() - train_start)
+        self._logger.debug("training complete: %s rules in %.2fs", rule_count, time.time() - train_start)
         self._prune(X)
 
     def _count_rules(self):
@@ -95,7 +96,7 @@ class Lemmatizer(object):  # pylint: disable=too-few-public-methods
 
     def _prune(self, X):
         pre_prune_count = self._count_rules()
-        logging.debug("rules before pruning: %s", pre_prune_count)
+        self._logger.debug("rules before pruning: %s", pre_prune_count)
         used_rules = {}
 
         for word_class, full_form in X:
@@ -104,7 +105,7 @@ class Lemmatizer(object):  # pylint: disable=too-few-public-methods
                 continue
             used_rules[word_class + "_" + full_form_suffix] = len(lemmas)
 
-        logging.debug("used rules: %s", sum(used_rules.values()))
+        self._logger.debug("used rules: %s", sum(used_rules.values()))
 
         for word_class, word_class_rules in self.rules.items():
             full_form_suffixes = list(word_class_rules.keys())
@@ -113,7 +114,7 @@ class Lemmatizer(object):  # pylint: disable=too-few-public-methods
                     word_class_rules.pop(full_form_suffix)
 
         post_prune_count = self._count_rules()
-        logging.debug("rules after pruning: %s (%s removed)", post_prune_count, pre_prune_count - post_prune_count)
+        self._logger.debug("rules after pruning: %s (%s removed)", post_prune_count, pre_prune_count - post_prune_count)
 
 
 def load(language):
