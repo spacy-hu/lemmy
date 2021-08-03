@@ -3,27 +3,122 @@
 import logging
 import time
 from collections import defaultdict
-from typing import Iterable, Tuple, List, Dict, Optional, cast
+from dataclasses import dataclass, field
+from typing import Iterable, Tuple, List, Dict, Optional
 
 Tag = str
 Lemma = str
 Token = str
 Suffix = str
-SuffixTransformations = Dict[Suffix, List[Suffix]]
 
 
+@dataclass
+class SuffixWithEndMarker:
+    suffix: Suffix
+    end_marker: bool
+
+
+@dataclass
+class TokenTransformations:
+    token_suffix: Suffix
+    lemma_suffixes: List[SuffixWithEndMarker] = field(default_factory=list)
+
+    @classmethod
+    def create(cls, token: Token, lemma: Lemma, current_rule_length: int) -> "TokenTransformations":
+        if current_rule_length >= len(token) - 1:
+            # The current longest matching rule is at least as long as the full form minus one character. Thus, building
+            # a longer rule will use the entire full form.
+            token_suffix: Suffix
+            lemma_suffix: Suffix
+            exhausted: bool
+            token_suffix, lemma_suffix, exhausted = token, lemma, True
+            return TokenTransformations(token_suffix, [SuffixWithEndMarker(lemma_suffix, exhausted)])
+
+        min_rule_length: int = current_rule_length + 1
+        split_position: int = _find_suffix_start(token, lemma, min_rule_length)
+        token_suffix: Suffix = token[split_position:]
+        lemma_suffix: Suffix = lemma[split_position:]
+        assert min_rule_length <= len(token_suffix)
+
+        exhausted = len(token_suffix) == len(token)
+        return TokenTransformations(token_suffix, [SuffixWithEndMarker(lemma_suffix, exhausted)])
+
+    def __call__(self, token: Token) -> List[Lemma]:
+        """
+        Apply specified rule to specified full form.
+
+        Replace the the part of specified full form that matches the rule and replace with the lemma suffix of the rule.
+        """
+        if self.token_suffix == "":
+            return [token + lemma_suffix.suffix for lemma_suffix in self.lemma_suffixes]
+
+        prefix: str = token.rpartition(self.token_suffix)[0]
+        return [prefix + lemma_suffix.suffix for lemma_suffix in self.lemma_suffixes]
+
+
+class RuleRepository(Dict[Tag, Dict[Suffix, List[SuffixWithEndMarker]]]):
+    def __init__(self, value: Dict = None):
+        if value is None:
+            value = {}
+        super().__init__()
+        tag: Tag
+        for tag, inner_dict in value.items():
+            self[tag] = {
+                token_suffix: [SuffixWithEndMarker(lemma_suffix, end_marker)
+                               for lemma_suffix, end_marker in lemma_suffixes_w_end_markers]
+                for token_suffix, lemma_suffixes_w_end_markers in inner_dict.items()
+            }
+
+    def __missing__(self, key: Tag):
+        self[key] = defaultdict(list)
+        return self[key]
+
+    def get_longest_matching_rule_for(self, tag: Tag, token: Token) -> TokenTransformations:
+        """Find the rule with the longest full form suffix matching specified full form and class."""
+        best: TokenTransformations = TokenTransformations("", [SuffixWithEndMarker("", True)])
+        if tag not in self:
+            return best
+
+        start_index: int = 0
+        rules_for_tag: Dict[Suffix, List[SuffixWithEndMarker]] = self[tag]
+        while start_index <= len(token):
+            token_suffix: Suffix = token[start_index:]
+            if token_suffix in rules_for_tag:
+                best = TokenTransformations(token_suffix, rules_for_tag[token_suffix])
+                break
+            start_index += 1
+        return best
+
+    def has_rule_for(self, tag: Tag, token_suffix: Suffix, lemma_suffix: Suffix):
+        lemma_suffixes: List[SuffixWithEndMarker] = self[tag][token_suffix]
+        return lemma_suffix in (ls.suffix for ls in lemma_suffixes)
+
+    def has_tag(self, tag: Tag):
+        return tag in self
+
+    def is_rule_locked_for(self, tag: Tag, full_form_suffix: Suffix):
+        rules_list: List[SuffixWithEndMarker] = self[tag][full_form_suffix]
+        if not rules_list:
+            return False
+        return rules_list[0].end_marker
+
+    def __len__(self) -> int:
+        return sum(len(lemmas) for suffix_lookup in self.values() for lemmas in suffix_lookup.values())
+
+
+# noinspection PyPep8Naming
 class Lemmatizer(object):  # pylint: disable=too-few-public-methods
     """Class for lemmatizing words. Inspired by the CST lemmatizer."""
     _logger = logging.getLogger(__name__)
 
-    def __init__(self, rules: Dict[Tag, SuffixTransformations] = None):
+    def __init__(self, rules: Dict = None):
         """Initialize a lemmatizer using specified set of rules."""
-        self.rules = rules
+        self.rule_repo = RuleRepository(rules)
 
-    def lemmatize(self, tag: Tag, full_form: Token, prev_tag: Optional[Tag] = None) -> List[Lemma]:
+    def lemmatize(self, tag: Tag, token: Token, prev_tag: Optional[Tag] = None) -> List[Lemma]:
         """Return lemma for specified full form word of specified word class."""
-        rule = _longest_matching_rule(self.rules, tag, full_form)
-        predicted_lemmas = _apply_rule(rule, full_form)
+        rule: TokenTransformations = self.rule_repo.get_longest_matching_rule_for(tag, token)
+        predicted_lemmas: List[Lemma] = rule(token)
 
         if len(predicted_lemmas) == 1:
             # No ambiguity, just return the prediction.
@@ -33,41 +128,38 @@ class Lemmatizer(object):  # pylint: disable=too-few-public-methods
             # No history specified, so we can't avoid ambiguity.
             return predicted_lemmas
 
-        if prev_tag + "_" + tag not in self.rules:
+        if not self.rule_repo.has_tag(prev_tag + "_" + tag):
             # History not found, so we can't avoid ambiguity.
             return predicted_lemmas
 
         # Lemmatize using history.
-        return self.lemmatize(prev_tag + "_" + tag, full_form, prev_tag=None)
+        return self.lemmatize(prev_tag + "_" + tag, token, prev_tag=None)
 
     def fit(self, X: Iterable[Tuple[Tag, Token]], y: Iterable[Lemma], max_iteration: int = 20):
         """Train a lemmatizer on specified training data."""
-        self.rules: Dict[Tag, SuffixTransformations] = cast(Dict[Tag, SuffixTransformations],
-                                                            defaultdict(lambda: defaultdict(lambda: [])))
+        self.rule_repo: RuleRepository = RuleRepository()
         old_rule_count = -1
         epoch = 1
         train_start: float = time.time()
-        while old_rule_count != self._count_rules() and epoch <= max_iteration:
+        rule_count: int = 0
+        while old_rule_count != len(self.rule_repo) and epoch <= max_iteration:
             epoch_start: float = time.time()
-            old_rule_count: int = self._count_rules()
+            old_rule_count: int = len(self.rule_repo)
             self._train_epoch(X, y)
-            rule_count: int = self._count_rules()
+            rule_count = len(self.rule_repo)
             self._logger.debug("epoch #%s: %s rules (%s new) in %.2fs", epoch, rule_count, rule_count - old_rule_count,
                                time.time() - epoch_start)
             epoch += 1
         self._logger.debug("training complete: %s rules in %.2fs", rule_count, time.time() - train_start)
         self._prune(X)
 
-    def _count_rules(self) -> int:
-        return sum(len(lemmas) for suffix_lookup in self.rules.values() for lemmas in suffix_lookup.values())
-
     def _train_epoch(self, X: Iterable[Tuple[Tag, Token]], y: Iterable[Lemma]):
         tag: Tag
         token: Token
         lemma: Lemma
         for (tag, token), lemma in zip(X, y):
-            rule: SuffixTransformations = _longest_matching_rule(self.rules, tag, token)
-            predicted_lemmas: List[Lemma] = _apply_rule(rule, token)
+            rule: TokenTransformations = self.rule_repo.get_longest_matching_rule_for(tag, token)
+            predicted_lemmas: List[Lemma] = rule(token)
 
             if len(predicted_lemmas) == 1 and lemma in predicted_lemmas:
                 # Current rules yield the correct lemma, so nothing to do.
@@ -75,151 +167,64 @@ class Lemmatizer(object):  # pylint: disable=too-few-public-methods
 
             # Current rules don't yield the correct lemma, so we will add a new rule. To make sure the new rule will
             # be used, try to make it at least one character longer than existing longest matching rule.
-            current_rule_length: int = len(rule[0])
-            full_form_suffix: Suffix
-            lemma_suffix: Suffix
-            exhausted: bool
-            full_form_suffix, lemma_suffix, exhausted = _create_rule(token, lemma, current_rule_length)
+            current_rule_length: int = len(rule.token_suffix)
+
+            rule: TokenTransformations = TokenTransformations.create(token, lemma, current_rule_length)
+            lemma_suffixes: List[SuffixWithEndMarker] = rule.lemma_suffixes
+            exhausted: bool = lemma_suffixes[0].end_marker
 
             if exhausted:
                 # New rule exhausts full form, meaning we may or may not have an existing rule with the new full
                 # form suffix.
-                if not self._full_form_suffix_locked(tag, full_form_suffix):
+                if not self.rule_repo.is_rule_locked_for(tag, rule.token_suffix):
                     # Existing rules for the full form suffix (if there are any) are not locked. So we remove them
                     # and replace them with the new rule.
-                    self.rules[tag][full_form_suffix] = [(lemma_suffix, True)]
-                elif not self._rule_exists(tag, full_form_suffix, lemma_suffix):
-                    self.rules[tag][full_form_suffix] += [(lemma_suffix, True)]
+                    self.rule_repo[tag][rule.token_suffix] = lemma_suffixes
+                elif not self.rule_repo.has_rule_for(tag, rule.token_suffix, lemma_suffixes[0].suffix):
+                    self.rule_repo[tag][rule.token_suffix] += lemma_suffixes
             else:
                 # New rule does not exhaust full form, meaning we are not using the complete full form for suffix.
                 # Therefore it's safe to assume the new rule is longer than previous matching rule, and subsequently
                 # that no rules with the new suffix exist. And so, we don't have to consider existing rules.
-                self.rules[tag][full_form_suffix] = [(lemma_suffix, False)]
+                self.rule_repo[tag][rule.token_suffix] = lemma_suffixes
 
-    def _full_form_suffix_locked(self, tag: Tag, full_form_suffix: Suffix):
-        rules_list = self.rules[tag][full_form_suffix]
-        if not rules_list:
-            return False
-        return rules_list[0][1]
-
-    def _rule_exists(self, word_class: Tag, full_form_suffix: Suffix, lemma_suffix: Suffix):
-        rules_list = self.rules[word_class][full_form_suffix]
-        if not rules_list:
-            return False
-        return lemma_suffix in (lemma_suffix_ for (lemma_suffix_, _) in rules_list)
-
-    def _prune(self, X):
-        pre_prune_count: int = self._count_rules()
+    def _prune(self, X: Iterable[Tuple[Tag, Token]]):
+        pre_prune_count: int = len(self.rule_repo)
         self._logger.debug("rules before pruning: %s", pre_prune_count)
         used_rules: Dict = {}
 
-        word_class: Tag
-        full_form: Token
-        for word_class, full_form in X:
-            full_form_suffix, lemmas = _longest_matching_rule(self.rules, word_class, full_form)
-            if full_form_suffix == "" and lemmas[0] == "":
+        tag: Tag
+        token: Token
+        for tag, token in X:
+            rule: TokenTransformations = self.rule_repo.get_longest_matching_rule_for(tag, token)
+            if rule.token_suffix == "" and rule.lemma_suffixes[0].suffix == "":
                 continue
-            used_rules[word_class + "_" + full_form_suffix] = len(lemmas)
+            used_rules[tag + "_" + rule.token_suffix] = len(rule.lemma_suffixes)
 
         self._logger.debug("used rules: %s", sum(used_rules.values()))
 
-        for word_class, word_class_rules in self.rules.items():
-            full_form_suffixes = list(word_class_rules.keys())
-            for full_form_suffix in full_form_suffixes:
-                if word_class + "_" + full_form_suffix not in used_rules:
-                    word_class_rules.pop(full_form_suffix)
+        tag: Tag
+        for tag, lemma_suffixes_for_token_suffix in self.rule_repo.items():
+            token_suffixes = list(lemma_suffixes_for_token_suffix.keys())
+            for token_suffix in token_suffixes:
+                if tag + "_" + token_suffix not in used_rules:
+                    lemma_suffixes_for_token_suffix.pop(token_suffix)
 
-        post_prune_count = self._count_rules()
+        post_prune_count = len(self.rule_repo)
         self._logger.debug("rules after pruning: %s (%s removed)", post_prune_count, pre_prune_count - post_prune_count)
 
 
-def load(language: str) -> Lemmatizer:
-    """Load lemmatizer for specified language."""
-    lookup = {'da': _load_da, 'sv': _load_sv}
-    if language not in lookup:
-        raise ValueError("Language not supported.")
-    return lookup[language]()
-
-
-def _load_da() -> Lemmatizer:
-    from lemmy.rules.da import rules as da_rules
-    return Lemmatizer(da_rules)
-
-
-def _load_sv() -> Lemmatizer:
-    from lemmy.rules.sv import rules as sv_rules
-    return Lemmatizer(sv_rules)
-
-
-def _create_rule(full_form: Token, lemma: Lemma, current_rule_length: int) -> Tuple[Suffix, Suffix, bool]:
-    if current_rule_length >= len(full_form) - 1:
-        # The current longest matching rule is at least as long as the full form minus one character. Thus, building
-        # a longer rule will use the entire full form.
-        full_form_suffix: Suffix
-        lemma_suffix: Suffix
-        exhausted: bool
-        full_form_suffix, lemma_suffix, exhausted = full_form, lemma, True
-        return full_form_suffix, lemma_suffix, exhausted
-
-    min_rule_length = current_rule_length + 1
-    split_position = _find_suffix_start(full_form, lemma, min_rule_length)
-    full_form_suffix = full_form[split_position:]
-    lemma_suffix = lemma[split_position:]
-    assert min_rule_length <= len(full_form_suffix)
-
-    exhausted = len(full_form_suffix) == len(full_form)
-    return full_form_suffix, lemma_suffix, exhausted
-
-
-def _find_suffix_start(full_form: Token, lemma: Lemma, min_rule_length: int):
+def _find_suffix_start(token: Token, lemma: Lemma, min_rule_length: int) -> int:
     """
     Find and return the index at which the suffix begins.
 
     Full form and lemma will have all characters to the left of the suffix in common. The split will be made far enough
     to the left to allow for the suffix to consist of at least 'min_rule_length' characters.
     """
-    max_prefix_length = _max_full_form_prefix_length(full_form, lemma, min_rule_length)
-    suffix_start = 0
-    while suffix_start < max_prefix_length and lemma[suffix_start] == full_form[suffix_start]:
+
+    token_prefix_len: int = len(token) - min_rule_length
+    max_prefix_length: int = min(len(lemma), token_prefix_len)
+    suffix_start: int = 0
+    while suffix_start < max_prefix_length and lemma[suffix_start] == token[suffix_start]:
         suffix_start += 1
     return suffix_start
-
-
-def _max_full_form_prefix_length(full_form: Token, lemma: Lemma, min_rule_length: int):
-    """Return the maximum possible length of the prefix (part of the full form preceding the suffix)."""
-    full_form_prefix = len(full_form) - min_rule_length
-    return min(len(lemma), full_form_prefix)
-
-
-def _longest_matching_rule(rules: Dict[Tag, SuffixTransformations], word_class: Tag,
-                           full_form: Token) -> SuffixTransformations:
-    """Find the rule with the longest full form suffix matching specified full form and class."""
-    best = ("", [""])
-    if word_class not in rules:
-        return best
-
-    start_index: int = 0
-    word_class_rules = rules[word_class]
-    while start_index <= len(full_form):
-        temp_suffix = full_form[start_index:]
-        if temp_suffix in word_class_rules:
-            best = temp_suffix, word_class_rules[temp_suffix]
-            break
-        start_index += 1
-    return best
-
-
-def _apply_rule(rule: SuffixTransformations, full_form: Token) -> List[Lemma]:
-    """
-    Apply specified rule to specified full form.
-
-    Replace the the part of specified full form that matches the rule and replace with the lemma suffix of the rule.
-    """
-    full_form_suffix: Suffix
-    lemma_suffixes: List[Suffix]
-    full_form_suffix, lemma_suffixes = rule
-    if full_form_suffix == "":
-        return [full_form + lemma_suffix for lemma_suffix in lemma_suffixes]
-
-    prefix = full_form.rpartition(full_form_suffix)[0]
-    return [prefix + lemma_suffix for lemma_suffix, _locked in lemma_suffixes]
