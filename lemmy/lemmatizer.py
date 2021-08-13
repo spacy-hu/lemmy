@@ -4,7 +4,9 @@ import logging
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Iterable, Tuple, List, Dict, Optional, TypeVar, Generic, Union
+from typing import Iterable, Tuple, List, Dict, Optional, TypeVar, Generic, Union, Any, NamedTuple
+
+from lemmy.serialization import Serializable, C
 
 Tag = str
 Lemma = str
@@ -12,8 +14,7 @@ Token = str
 Suffix = str
 
 
-@dataclass
-class SuffixWithEndMarker:
+class SuffixWithEndMarker(NamedTuple):
     suffix: Suffix
     end_marker: bool
 
@@ -56,7 +57,18 @@ class TokenTransformations:
         return [prefix + lemma_suffix.suffix for lemma_suffix in self.lemma_suffixes]
 
 
-class RuleRepository(Dict[Tag, Dict[Suffix, List[SuffixWithEndMarker]]]):
+class RuleRepository(Dict[Tag, Dict[Suffix, List[SuffixWithEndMarker]]], Serializable["RuleRepository"]):
+    @classmethod
+    def _version(cls) -> int:
+        return 1
+
+    def _to_bytes(self) -> Dict[str, Any]:
+        return dict(self)
+
+    @classmethod
+    def _from_bytes(cls, msg: Dict[str, Any]) -> C:
+        return RuleRepository(msg)
+
     def __init__(self, value: Dict = None):
         if value is None:
             value = {}
@@ -102,20 +114,37 @@ class RuleRepository(Dict[Tag, Dict[Suffix, List[SuffixWithEndMarker]]]):
             return False
         return rules_list[0].end_marker
 
-    def __len__(self) -> int:
-        return sum(len(lemmas) for suffix_lookup in self.values() for lemmas in suffix_lookup.values())
+    # def __len__(self) -> int:
+    #     return sum(len(lemmas) for suffix_lookup in self.values() for lemmas in suffix_lookup.values())
 
 
 T = TypeVar("T")
 
 
-class Counter(Generic[T]):
+class Counter(Generic[T], Serializable["Counter[T]"]):
+    @classmethod
+    def _version(cls) -> int:
+        return 1
+
+    def _to_bytes(self) -> Dict[str, Any]:
+        return dict(
+            total=self._total,
+            counts=self._counts
+        )
+
+    @classmethod
+    def _from_bytes(cls, msg: Dict[str, Any]) -> "Counter[T]":
+        counter = Counter()
+        counter._counts = defaultdict(int, msg["counts"])
+        counter._total = msg["total"]
+        return counter
+
     def __init__(self):
-        self._lemma_freqs: Dict[T: int] = defaultdict(int)
+        self._counts: Dict[T: int] = defaultdict(int)
         self._total: int = 0
 
     def add(self, item: T):
-        self._lemma_freqs[item] += 1
+        self._counts[item] += 1
         self._total += 1
 
     def add_all(self, items: Iterable[T]):
@@ -123,16 +152,35 @@ class Counter(Generic[T]):
             self.add(e)
 
     def __getitem__(self, item: T) -> int:
-        return self._lemma_freqs[item]
+        return self._counts[item]
 
     def __len__(self):
         return self._total
 
 
 # noinspection PyPep8Naming
-class Lemmatizer(object):  # pylint: disable=too-few-public-methods
+class Lemmatizer(Serializable["Lemmatizer"]):  # pylint: disable=too-few-public-methods
     """Class for lemmatizing words. Inspired by the CST lemmatizer."""
+
     _logger = logging.getLogger(__name__)
+
+    @classmethod
+    def _version(cls) -> int:
+        return 1
+
+    def _to_bytes(self) -> Dict[str, Any]:
+        msg = dict(
+            rule_repo=self._rule_repo.to_bytes(),
+            lemma_counter=self._lemma_counter.to_bytes()
+        )
+        return msg
+
+    @classmethod
+    def _from_bytes(cls, msg: Dict[str, Any]) -> "Lemmatizer":
+        lemmatizer = Lemmatizer()
+        lemmatizer._rule_repo = RuleRepository.from_bytes(msg["rule_repo"])
+        lemmatizer._lemma_counter = Counter[Lemma].from_bytes(msg["lemma_counter"])
+        return lemmatizer
 
     def __init__(self):
         """Initialize a lemmatizer using specified set of rules."""
