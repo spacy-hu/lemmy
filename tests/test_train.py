@@ -9,8 +9,8 @@ from lemmy.lemmatizer import _find_suffix_start
 
 
 @pytest.fixture(scope="module")
-def lemmatizer(request):
-    return lemmy.load("da")
+def lemmatizer():
+    return lemmy.Lemmatizer()
 
 
 def _prepare(data):
@@ -37,7 +37,7 @@ class TestTraining(object):
 
         ([('noun', 'alen', 'ale'), ('noun', 'alen', 'alen')],
          [('noun', 'alen', ['alen', 'ale']), ('noun', 'alen', ['alen', 'ale'])])
-        ])
+    ])
     def test_fit(self, lemmatizer, train, test):
         """Test training on small datasets."""
         X, y = _prepare(train)
