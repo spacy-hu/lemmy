@@ -4,7 +4,7 @@ import logging
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Iterable, Tuple, List, Dict, Optional
+from typing import Iterable, Tuple, List, Dict, Optional, TypeVar, Generic, Union
 
 Tag = str
 Lemma = str
@@ -106,59 +106,81 @@ class RuleRepository(Dict[Tag, Dict[Suffix, List[SuffixWithEndMarker]]]):
         return sum(len(lemmas) for suffix_lookup in self.values() for lemmas in suffix_lookup.values())
 
 
+T = TypeVar("T")
+
+
+class Counter(Generic[T]):
+    def __init__(self):
+        self._lemma_freqs: Dict[T: int] = defaultdict(int)
+        self._total: int = 0
+
+    def add(self, item: T):
+        self._lemma_freqs[item] += 1
+        self._total += 1
+
+    def add_all(self, items: Iterable[T]):
+        for e in items:
+            self.add(e)
+
+    def __getitem__(self, item: T) -> int:
+        return self._lemma_freqs[item]
+
+    def __len__(self):
+        return self._total
+
+
 # noinspection PyPep8Naming
 class Lemmatizer(object):  # pylint: disable=too-few-public-methods
     """Class for lemmatizing words. Inspired by the CST lemmatizer."""
     _logger = logging.getLogger(__name__)
 
-    def __init__(self, rules: Dict = None):
+    def __init__(self):
         """Initialize a lemmatizer using specified set of rules."""
-        self.rule_repo = RuleRepository(rules)
+        self._rule_repo = RuleRepository()
+        self._lemma_counter: Counter[Lemma] = Counter[Lemma]()
 
-    def lemmatize(self, tag: Tag, token: Token, prev_tag: Optional[Tag] = None) -> List[Lemma]:
+    def lemmatize(self, tag: Tag, token: Token, prev_tag: Optional[Tag] = None,
+                  disambiguate: bool = True) -> Union[Lemma, List[Lemma]]:
         """Return lemma for specified full form word of specified word class."""
-        rule: TokenTransformations = self.rule_repo.get_longest_matching_rule_for(tag, token)
+        rule: TokenTransformations = self._rule_repo.get_longest_matching_rule_for(tag, token)
         predicted_lemmas: List[Lemma] = rule(token)
 
-        if len(predicted_lemmas) == 1:
-            # No ambiguity, just return the prediction.
-            return predicted_lemmas
+        lemma_candidates: List[Lemma] = predicted_lemmas
 
-        if prev_tag is None:
-            # No history specified, so we can't avoid ambiguity.
-            return predicted_lemmas
+        # Lemmatize using history. FIXME: most probably this never happens
+        if prev_tag is not None and self._rule_repo.has_tag(prev_tag + "_" + tag):
+            lemma_candidates = self.lemmatize(prev_tag + "_" + tag, token, prev_tag=None)
 
-        if not self.rule_repo.has_tag(prev_tag + "_" + tag):
-            # History not found, so we can't avoid ambiguity.
-            return predicted_lemmas
+        if not disambiguate:
+            return lemma_candidates
 
-        # Lemmatize using history.
-        return self.lemmatize(prev_tag + "_" + tag, token, prev_tag=None)
+        return self.disambiguate(lemma_candidates)
 
-    def fit(self, X: Iterable[Tuple[Tag, Token]], y: Iterable[Lemma], max_iteration: int = 20):
+    def fit(self, tags_with_tokens: Iterable[Tuple[Tag, Token]], lemmata: Iterable[Lemma], max_iteration: int = 20):
         """Train a lemmatizer on specified training data."""
-        self.rule_repo: RuleRepository = RuleRepository()
+        self._lemma_counter.add_all(lemmata)
+
         old_rule_count = -1
         epoch = 1
         train_start: float = time.time()
         rule_count: int = 0
-        while old_rule_count != len(self.rule_repo) and epoch <= max_iteration:
+        while old_rule_count != len(self._rule_repo) and epoch <= max_iteration:
             epoch_start: float = time.time()
-            old_rule_count: int = len(self.rule_repo)
-            self._train_epoch(X, y)
-            rule_count = len(self.rule_repo)
+            old_rule_count: int = len(self._rule_repo)
+            self._train_epoch(tags_with_tokens, lemmata)
+            rule_count = len(self._rule_repo)
             self._logger.debug("epoch #%s: %s rules (%s new) in %.2fs", epoch, rule_count, rule_count - old_rule_count,
                                time.time() - epoch_start)
             epoch += 1
         self._logger.debug("training complete: %s rules in %.2fs", rule_count, time.time() - train_start)
-        self._prune(X)
+        self._prune(tags_with_tokens)
 
-    def _train_epoch(self, X: Iterable[Tuple[Tag, Token]], y: Iterable[Lemma]):
+    def _train_epoch(self, tags_with_tokens: Iterable[Tuple[Tag, Token]], lemmata: Iterable[Lemma]):
         tag: Tag
         token: Token
         lemma: Lemma
-        for (tag, token), lemma in zip(X, y):
-            rule: TokenTransformations = self.rule_repo.get_longest_matching_rule_for(tag, token)
+        for (tag, token), lemma in zip(tags_with_tokens, lemmata):
+            rule: TokenTransformations = self._rule_repo.get_longest_matching_rule_for(tag, token)
             predicted_lemmas: List[Lemma] = rule(token)
 
             if len(predicted_lemmas) == 1 and lemma in predicted_lemmas:
@@ -176,27 +198,27 @@ class Lemmatizer(object):  # pylint: disable=too-few-public-methods
             if exhausted:
                 # New rule exhausts full form, meaning we may or may not have an existing rule with the new full
                 # form suffix.
-                if not self.rule_repo.is_rule_locked_for(tag, rule.token_suffix):
+                if not self._rule_repo.is_rule_locked_for(tag, rule.token_suffix):
                     # Existing rules for the full form suffix (if there are any) are not locked. So we remove them
                     # and replace them with the new rule.
-                    self.rule_repo[tag][rule.token_suffix] = lemma_suffixes
-                elif not self.rule_repo.has_rule_for(tag, rule.token_suffix, lemma_suffixes[0].suffix):
-                    self.rule_repo[tag][rule.token_suffix] += lemma_suffixes
+                    self._rule_repo[tag][rule.token_suffix] = lemma_suffixes
+                elif not self._rule_repo.has_rule_for(tag, rule.token_suffix, lemma_suffixes[0].suffix):
+                    self._rule_repo[tag][rule.token_suffix] += lemma_suffixes
             else:
                 # New rule does not exhaust full form, meaning we are not using the complete full form for suffix.
                 # Therefore it's safe to assume the new rule is longer than previous matching rule, and subsequently
                 # that no rules with the new suffix exist. And so, we don't have to consider existing rules.
-                self.rule_repo[tag][rule.token_suffix] = lemma_suffixes
+                self._rule_repo[tag][rule.token_suffix] = lemma_suffixes
 
-    def _prune(self, X: Iterable[Tuple[Tag, Token]]):
-        pre_prune_count: int = len(self.rule_repo)
+    def _prune(self, tags_with_tokens: Iterable[Tuple[Tag, Token]]):
+        pre_prune_count: int = len(self._rule_repo)
         self._logger.debug("rules before pruning: %s", pre_prune_count)
         used_rules: Dict = {}
 
         tag: Tag
         token: Token
-        for tag, token in X:
-            rule: TokenTransformations = self.rule_repo.get_longest_matching_rule_for(tag, token)
+        for tag, token in tags_with_tokens:
+            rule: TokenTransformations = self._rule_repo.get_longest_matching_rule_for(tag, token)
             if rule.token_suffix == "" and rule.lemma_suffixes[0].suffix == "":
                 continue
             used_rules[tag + "_" + rule.token_suffix] = len(rule.lemma_suffixes)
@@ -204,14 +226,24 @@ class Lemmatizer(object):  # pylint: disable=too-few-public-methods
         self._logger.debug("used rules: %s", sum(used_rules.values()))
 
         tag: Tag
-        for tag, lemma_suffixes_for_token_suffix in self.rule_repo.items():
+        for tag, lemma_suffixes_for_token_suffix in self._rule_repo.items():
             token_suffixes = list(lemma_suffixes_for_token_suffix.keys())
             for token_suffix in token_suffixes:
                 if tag + "_" + token_suffix not in used_rules:
                     lemma_suffixes_for_token_suffix.pop(token_suffix)
 
-        post_prune_count = len(self.rule_repo)
+        post_prune_count = len(self._rule_repo)
         self._logger.debug("rules after pruning: %s (%s removed)", post_prune_count, pre_prune_count - post_prune_count)
+
+    def disambiguate(self, lemma_candidates: List[Lemma]) -> Lemma:
+        max_count = -1
+        lemma: Lemma
+        for candidate in lemma_candidates:
+            count: int = self._lemma_counter[candidate]
+            if count > max_count:
+                lemma = candidate
+        # noinspection PyUnboundLocalVariable
+        return lemma
 
 
 def _find_suffix_start(token: Token, lemma: Lemma, min_rule_length: int) -> int:
