@@ -202,7 +202,12 @@ class Lemmatizer(Serializable["Lemmatizer"]):  # pylint: disable=too-few-public-
         if not disambiguate:
             return lemma_candidates
 
-        return self.disambiguate(lemma_candidates)
+        lemma: Lemma = self.disambiguate(tag, token, lemma_candidates)
+
+        if self._lemma_counter[lemma] <= 0 and self._lemma_counter[token] > 0:
+            lemma = token
+
+        return lemma
 
     def fit(self, tags_with_tokens: Iterable[Tuple[Tag, Token]], lemmata: Iterable[Lemma], max_iteration: int = 20):
         """Train a lemmatizer on specified training data."""
@@ -283,13 +288,17 @@ class Lemmatizer(Serializable["Lemmatizer"]):  # pylint: disable=too-few-public-
         post_prune_count = len(self._rule_repo)
         self._logger.debug("rules after pruning: %s (%s removed)", post_prune_count, pre_prune_count - post_prune_count)
 
-    def disambiguate(self, lemma_candidates: List[Lemma]) -> Lemma:
+    def disambiguate(self, tag: Tag, token: Token, lemma_candidates: List[Lemma]) -> Lemma:
         max_count = -1
-        lemma: Lemma
+        lemma: Lemma = token
         for candidate in lemma_candidates:
+            if len(candidate) > len(token):
+                continue
             count: int = self._lemma_counter[candidate]
             if count > max_count:
                 lemma = candidate
+                max_count = count
+
         # noinspection PyUnboundLocalVariable
         return lemma
 
