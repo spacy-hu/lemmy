@@ -79,6 +79,14 @@ optional = false
 python-versions = ">=2.7, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*, !=3.4.*"
 
 [[package]]
+name = "conllu"
+version = "4.4.1"
+description = "CoNLL-U Parser parses a CoNLL-U formatted string into a nested python dictionary"
+category = "main"
+optional = false
+python-versions = ">=3.6"
+
+[[package]]
 name = "cymem"
 version = "2.0.5"
 description = "Manage calls to calloc/free through Cython"
@@ -499,7 +507,7 @@ testing = ["pytest (>=4.6)", "pytest-checkdocs (>=2.4)", "pytest-flake8", "pytes
 [metadata]
 lock-version = "1.1"
 python-versions = "^3.7.1"
-content-hash = "b60789f8f9496f710d21333b52ea55b57c75cbb384a43379fa22482fdcd743c3"
+content-hash = "beacca4ed54732bbfc8b7574bdc568df107736c47900b19a317a3c53e6a33041"
 
 [metadata.files]
 atomicwrites = [
@@ -544,6 +552,10 @@ click = [
 colorama = [
     {file = "colorama-0.4.4-py2.py3-none-any.whl", hash = "sha256:9f47eda37229f68eee03b24b9748937c7dc3868f906e8ba69fbcbdd3bc5dc3e2"},
     {file = "colorama-0.4.4.tar.gz", hash = "sha256:5941b2b48a20143d2267e95b1c2a7603ce057ee39fd88e7329b0c292aa16869b"},
+]
+conllu = [
+    {file = "conllu-4.4.1-py2.py3-none-any.whl", hash = "sha256:d17db3fb4884e4d221cd1e333d897257db7605ce58c76ff16294d3af9ffadb1c"},
+    {file = "conllu-4.4.1.tar.gz", hash = "sha256:0029fb83ca225dd7e9ac342aabdb4717c0227d3b1d4497abf97b7dbc2cc04dd1"},
 ]
 cymem = [
     {file = "cymem-2.0.5-cp36-cp36m-macosx_10_9_x86_64.whl", hash = "sha256:9d72d69f7a62a280199c3aa7bc550685c47d6d0689b2d299e6492253b86d2437"},

@@ -23,10 +23,15 @@ packages = [
 python = "^3.7.1"
 spacy = "^3.1.0"
 srsly = "^2.4.1"
+typer = "^0.3.2"
+conllu = "^4.4.1"
 
 [tool.poetry.dev-dependencies]
 pytest = "^6.2.4"
 pytest-runner = "^5.3.1"
+
+[tool.poetry.scripts]
+lemmy = 'lemmy.cli.__main__:app'
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]
