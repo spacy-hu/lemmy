@@ -187,28 +187,6 @@ class Lemmatizer(Serializable["Lemmatizer"]):  # pylint: disable=too-few-public-
         self._rule_repo = RuleRepository()
         self._lemma_counter: Counter[Lemma] = Counter[Lemma]()
 
-    def lemmatize(self, tag: Tag, token: Token, prev_tag: Optional[Tag] = None,
-                  disambiguate: bool = True) -> Union[Lemma, List[Lemma]]:
-        """Return lemma for specified full form word of specified word class."""
-        rule: TokenTransformations = self._rule_repo.get_longest_matching_rule_for(tag, token)
-        predicted_lemmas: List[Lemma] = rule(token)
-
-        lemma_candidates: List[Lemma] = predicted_lemmas
-
-        # Lemmatize using history. FIXME: most probably this never happens
-        if prev_tag is not None and self._rule_repo.has_tag(prev_tag + "_" + tag):
-            lemma_candidates = self.lemmatize(prev_tag + "_" + tag, token, prev_tag=None)
-
-        if not disambiguate:
-            return lemma_candidates
-
-        lemma: Lemma = self.disambiguate(tag, token, lemma_candidates)
-
-        if self._lemma_counter[lemma] <= 0 and self._lemma_counter[token] > 0:
-            lemma = token
-
-        return lemma
-
     def fit(self, tags_with_tokens: Iterable[Tuple[Tag, Token]], lemmata: Iterable[Lemma], max_iteration: int = 20):
         """Train a lemmatizer on specified training data."""
         self._lemma_counter.add_all(lemmata)
@@ -287,6 +265,28 @@ class Lemmatizer(Serializable["Lemmatizer"]):  # pylint: disable=too-few-public-
 
         post_prune_count = len(self._rule_repo)
         self._logger.debug("rules after pruning: %s (%s removed)", post_prune_count, pre_prune_count - post_prune_count)
+
+    def lemmatize(self, tag: Tag, token: Token, prev_tag: Optional[Tag] = None,
+                  disambiguate: bool = True) -> Union[Lemma, List[Lemma]]:
+        """Return lemma for specified full form word of specified word class."""
+        rule: TokenTransformations = self._rule_repo.get_longest_matching_rule_for(tag, token)
+        predicted_lemmas: List[Lemma] = rule(token)
+
+        lemma_candidates: List[Lemma] = predicted_lemmas #+ list(map(str.lower, predicted_lemmas))
+
+        # Lemmatize using history. FIXME: most probably this never happens
+        if prev_tag is not None and self._rule_repo.has_tag(prev_tag + "_" + tag):
+            lemma_candidates = self.lemmatize(prev_tag + "_" + tag, token, prev_tag=None)
+
+        if not disambiguate:
+            return lemma_candidates
+
+        lemma: Lemma = self.disambiguate(tag, token, lemma_candidates)
+
+        if self._lemma_counter[lemma] <= 0 and self._lemma_counter[token] > 0:
+            lemma = token
+
+        return lemma
 
     def disambiguate(self, tag: Tag, token: Token, lemma_candidates: List[Lemma]) -> Lemma:
         max_count = -1
