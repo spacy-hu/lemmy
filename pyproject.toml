@@ -1,8 +1,9 @@
 [tool.poetry]
-name = "lemmy"
-version = "3.0.0"
+name = "lemmy3"
+version = "3.0.0-alpha"
 description = "Lemmy lemmatizer"
 homepage = "https://github.com/spacy-hu/lemmy"
+readme = "README.md"
 keywords = ["nlp", "lemmy", "lemmatizer", "spacy"]
 authors = ["Gyorgy Orosz <gyorgy@orosz.link>"]
 classifiers=[
