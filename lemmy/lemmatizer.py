@@ -269,6 +269,7 @@ class Lemmatizer(Serializable["Lemmatizer"]):  # pylint: disable=too-few-public-
     def lemmatize(self, tag: Tag, token: Token, prev_tag: Optional[Tag] = None,
                   disambiguate: bool = True) -> Union[Lemma, List[Lemma]]:
         """Return lemma for specified full form word of specified word class."""
+        token = self.__simple_true_caser(tag, token)
         rule: TokenTransformations = self._rule_repo.get_longest_matching_rule_for(tag, token)
         predicted_lemmas: List[Lemma] = rule(token)
 
@@ -301,6 +302,16 @@ class Lemmatizer(Serializable["Lemmatizer"]):  # pylint: disable=too-few-public-
 
         # noinspection PyUnboundLocalVariable
         return lemma
+
+    @staticmethod
+    def __simple_true_caser(tag: Tag, token: Token) -> Token:
+        if token.islower():
+            return token
+        if tag == 'DET':
+            token = token.lower()
+        elif tag != 'PROPN':
+            token = token.lower()
+        return token
 
 
 def _find_suffix_start(token: Token, lemma: Lemma, min_rule_length: int) -> int:
