@@ -8,11 +8,11 @@ import typer
 from conllu import TokenList
 
 from lemmy import Lemmatizer
-from lemmy.lemmatizer import Lemma, Token, Tag
+from lemmy.lemmatizer import Lemma, Token, Tag, Position
 
 app = typer.Typer()
 
-TaggedWords = List[Tuple[Tag, Token]]
+TaggedWords = List[Tuple[Tag, Token, Position]]
 Lemmata = List[Lemma]
 
 CONTRACTION_PATTERN = re.compile(r"(\w)(\+)(\w)")
@@ -23,7 +23,7 @@ def read_file(path: Path, ignore_contractions: bool = True) -> Tuple[TaggedWords
         sentences: List[TokenList] = conllu.parse(f.read().strip())
 
         X = [
-            (token["upos"], token["form"])
+            (token["upos"], token["form"], sentence.index(token))
             for sentence in sentences
             for token in sentence
         ]
@@ -37,8 +37,8 @@ def read_file(path: Path, ignore_contractions: bool = True) -> Tuple[TaggedWords
 def debug(model_path: Path, test_data: Path, ignore_contractions: bool = True):
     lemmatizer: Lemmatizer = Lemmatizer.from_disk(model_path)
     tagged_words, lemmata = read_file(test_data, ignore_contractions)
-    predicted: List[Lemma] = [lemmatizer.lemmatize(tag, word) for tag, word in tagged_words]
-    for lemma, pred, (tag, word) in zip(lemmata, predicted, tagged_words):
+    predicted: List[Lemma] = [lemmatizer.lemmatize(tag, word, position) for tag, word, position in tagged_words]
+    for lemma, pred, (tag, word, position) in zip(lemmata, predicted, tagged_words):
         if lemma != pred:
             print(f"Wrong lemma for {word}[{tag}]: '{pred}', should be '{lemma}'")
 
@@ -50,7 +50,7 @@ def evaluate(model_path: Path, test_data: Path, ignore_contractions: bool = True
         start = timeit.default_timer()
     lemmatizer: Lemmatizer = Lemmatizer.from_disk(model_path)
     tagged_words, lemmata = read_file(test_data, ignore_contractions)
-    predicted: List[Lemma] = [lemmatizer.lemmatize(tag, word) for tag, word in tagged_words]
+    predicted: List[Lemma] = [lemmatizer.lemmatize(tag, word, position) for tag, word, position in tagged_words]
     accuracy = sum([gt == pred for gt, pred in zip(lemmata, predicted)]) / float(len(lemmata))
     print(f"Accuracy: {accuracy:.2%}")
     if time:
@@ -66,7 +66,7 @@ def train(train_path: Path, model_path: Path, max_iterations: int = typer.Option
     lemmatizer: Lemmatizer = Lemmatizer()
     lemmatizer.fit(tagged_words, lemmata, max_iteration=max_iterations)
 
-    predicted: List[Lemma] = [lemmatizer.lemmatize(tag, word) for tag, word in tagged_words]
+    predicted: List[Lemma] = [lemmatizer.lemmatize(tag, word, position) for tag, word, position in tagged_words]
     accuracy = sum([gt == pred for gt, pred in zip(lemmata, predicted)]) / float(len(lemmata))
     print(f"Accuracy: {accuracy:.2%}")
 

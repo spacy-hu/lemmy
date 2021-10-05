@@ -15,6 +15,7 @@ Tag = str
 Lemma = str
 Token = str
 Suffix = str
+Position = int
 
 
 class SuffixWithEndMarker(NamedTuple):
@@ -190,7 +191,7 @@ class Lemmatizer(Serializable["Lemmatizer"]):  # pylint: disable=too-few-public-
         self._rule_repo = RuleRepository()
         self._lemma_counter: Counter[Lemma] = Counter[Lemma]()
 
-    def fit(self, tags_with_tokens: Iterable[Tuple[Tag, Token]], lemmata: Iterable[Lemma], max_iteration: int = 20):
+    def fit(self, tags_with_tokens: Iterable[Tuple[Tag, Token, Position]], lemmata: Iterable[Lemma], max_iteration: int = 20):
         """Train a lemmatizer on specified training data."""
         self._lemma_counter.add_all(lemmata)
 
@@ -209,12 +210,12 @@ class Lemmatizer(Serializable["Lemmatizer"]):  # pylint: disable=too-few-public-
         self._logger.debug("training complete: %s rules in %.2fs", rule_count, time.time() - train_start)
         self._prune(tags_with_tokens)
 
-    def _train_epoch(self, tags_with_tokens: Iterable[Tuple[Tag, Token]], lemmata: Iterable[Lemma]):
+    def _train_epoch(self, tags_with_tokens: Iterable[Tuple[Tag, Token, Position]], lemmata: Iterable[Lemma]):
         tag: Tag
         token: Token
         lemma: Lemma
-        for (tag, token), lemma in zip(tags_with_tokens, lemmata):
-            #token = self.__simple_true_caser(tag, token)
+        for (tag, token, position), lemma in zip(tags_with_tokens, lemmata):
+            #token = self.__simple_true_caser(tag, token, position)
             token = self.__mask_numbers(token)
             lemma = self.__mask_numbers(lemma)
             rule: TokenTransformations = self._rule_repo.get_longest_matching_rule_for(tag, token)
@@ -247,14 +248,14 @@ class Lemmatizer(Serializable["Lemmatizer"]):  # pylint: disable=too-few-public-
                 # that no rules with the new suffix exist. And so, we don't have to consider existing rules.
                 self._rule_repo[tag][rule.token_suffix] = lemma_suffixes
 
-    def _prune(self, tags_with_tokens: Iterable[Tuple[Tag, Token]]):
+    def _prune(self, tags_with_tokens: Iterable[Tuple[Tag, Token, Position]]):
         pre_prune_count: int = len(self._rule_repo)
         self._logger.debug("rules before pruning: %s", pre_prune_count)
         used_rules: Dict = {}
 
         tag: Tag
         token: Token
-        for tag, token in tags_with_tokens:
+        for tag, token, position in tags_with_tokens:
             rule: TokenTransformations = self._rule_repo.get_longest_matching_rule_for(tag, token)
             if rule.token_suffix == "" and rule.lemma_suffixes[0].suffix == "":
                 continue
@@ -272,10 +273,10 @@ class Lemmatizer(Serializable["Lemmatizer"]):  # pylint: disable=too-few-public-
         post_prune_count = len(self._rule_repo)
         self._logger.debug("rules after pruning: %s (%s removed)", post_prune_count, pre_prune_count - post_prune_count)
 
-    def lemmatize(self, tag: Tag, token: Token, prev_tag: Optional[Tag] = None,
+    def lemmatize(self, tag: Tag, token: Token, position: Position, prev_tag: Optional[Tag] = None,
                   disambiguate: bool = True) -> Union[Lemma, List[Lemma]]:
         """Return lemma for specified full form word of specified word class."""
-        token = self.__simple_true_caser(tag, token)
+        token = self.__simple_true_caser(tag, token, position)
         masked_token = self.__mask_numbers(token)
         rule: TokenTransformations = self._rule_repo.get_longest_matching_rule_for(tag, masked_token)
         predicted_lemmas: List[Lemma] = rule(masked_token)
@@ -321,12 +322,12 @@ class Lemmatizer(Serializable["Lemmatizer"]):  # pylint: disable=too-few-public-
         return lemma
 
     @staticmethod
-    def __simple_true_caser(tag: Tag, token: Token) -> Token:
+    def __simple_true_caser(tag: Tag, token: Token, position: Position) -> Token:
+        if position != 0:
+            return token
         if token.islower():
             return token
-        if tag == 'DET':
-            token = token.lower()
-        elif tag != 'PROPN':
+        if tag != 'PROPN':
             token = token.lower()
         return token
 
