@@ -215,7 +215,6 @@ class Lemmatizer(Serializable["Lemmatizer"]):  # pylint: disable=too-few-public-
         token: Token
         lemma: Lemma
         for (tag, token, position), lemma in zip(tags_with_tokens, lemmata):
-            #token = self.__simple_true_caser(tag, token, position)
             token = self.__mask_numbers(token)
             lemma = self.__mask_numbers(lemma)
             rule: TokenTransformations = self._rule_repo.get_longest_matching_rule_for(tag, token)
@@ -276,7 +275,7 @@ class Lemmatizer(Serializable["Lemmatizer"]):  # pylint: disable=too-few-public-
     def lemmatize(self, tag: Tag, token: Token, position: Position, prev_tag: Optional[Tag] = None,
                   disambiguate: bool = True) -> Union[Lemma, List[Lemma]]:
         """Return lemma for specified full form word of specified word class."""
-        token = self.__simple_true_caser(tag, token, position)
+        token = self.__simple_true_casing(tag, token, position)
         masked_token = self.__mask_numbers(token)
         rule: TokenTransformations = self._rule_repo.get_longest_matching_rule_for(tag, masked_token)
         predicted_lemmas: List[Lemma] = rule(masked_token)
@@ -298,13 +297,12 @@ class Lemmatizer(Serializable["Lemmatizer"]):  # pylint: disable=too-few-public-
                 new_lemma_candidates.append(token[:len(lemma_candidate)])
             else:
                 new_lemma_candidates.append(lemma_candidate)
-        #print(token, masked_token, new_lemma_candidates, sep="\t")
 
         lemma: Lemma = self.disambiguate(tag, token, new_lemma_candidates)
 
         if self._lemma_counter[lemma] <= 0 and self._lemma_counter[token] > 0:
             lemma = token
-        #print(lemma)
+
         return lemma
 
     def disambiguate(self, tag: Tag, token: Token, lemma_candidates: List[Lemma]) -> Lemma:
@@ -322,7 +320,7 @@ class Lemmatizer(Serializable["Lemmatizer"]):  # pylint: disable=too-few-public-
         return lemma
 
     @staticmethod
-    def __simple_true_caser(tag: Tag, token: Token, position: Position) -> Token:
+    def __simple_true_casing(tag: Tag, token: Token, position: Position) -> Token:
         if position != 0:
             return token
         if token.islower():

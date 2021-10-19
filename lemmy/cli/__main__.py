@@ -44,17 +44,12 @@ def debug(model_path: Path, test_data: Path, ignore_contractions: bool = True):
 
 
 @app.command()
-def evaluate(model_path: Path, test_data: Path, ignore_contractions: bool = True, time: bool = typer.Option(False)):
-    start: float
-    if time:
-        start = timeit.default_timer()
+def evaluate(model_path: Path, test_data: Path, ignore_contractions: bool = True):
     lemmatizer: Lemmatizer = Lemmatizer.from_disk(model_path)
     tagged_words, lemmata = read_file(test_data, ignore_contractions)
     predicted: List[Lemma] = [lemmatizer.lemmatize(tag, word, position) for tag, word, position in tagged_words]
     accuracy = sum([gt == pred for gt, pred in zip(lemmata, predicted)]) / float(len(lemmata))
     print(f"Accuracy: {accuracy:.2%}")
-    if time:
-        print(f"Execution time: {timeit.default_timer() - start:2f}")
 
 
 @app.command()
