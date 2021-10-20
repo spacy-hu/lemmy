@@ -34,13 +34,13 @@ class Serializable(abc.ABC, Generic[C]):
     def _from_bytes(cls, msg: Dict[str, Any]) -> C:
         raise NotImplementedError
 
-    def to_disk(self, path: Union[str, Path]) -> None:
+    def to_disk(self, path: Union[str, Path], exclude=tuple()) -> None:
         path = ensure_path(path)
         with path.open("wb") as file_:
             file_.write(self.to_bytes())
 
     @classmethod
-    def from_disk(cls, path: Union[str, Path]) -> C:
+    def from_disk(cls, path: Union[str, Path], exclude=tuple()) -> C:
         path = ensure_path(path)
         with path.open("rb") as file_:
             obj = cls.from_bytes(file_.read())
