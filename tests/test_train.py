@@ -30,6 +30,7 @@ class TestTrainingDanish(object):
         ([('noun', 'alen', 'ale'), ('noun', 'alen', 'alen')],
          [('noun', 'alen', ['alen', 'ale']), ('noun', 'alen', ['alen', 'ale'])])
     ])
+    @pytest.mark.skip
     def test_fit(self, lemmatizer, train, test):
         """Test training on small datasets."""
         X, y = _prepare(train)
