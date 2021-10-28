@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "lemmy3"
-version = "3.1.0-alpha"
+version = "3.2.0-alpha"
 description = "Lemmy lemmatizer"
 homepage = "https://github.com/spacy-hu/lemmy"
 readme = "README.md"
