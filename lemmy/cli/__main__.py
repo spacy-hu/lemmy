@@ -1,5 +1,4 @@
 import re
-import timeit
 from pathlib import Path
 from typing import Tuple, List
 
@@ -37,7 +36,7 @@ def read_file(path: Path, ignore_contractions: bool = True) -> Tuple[TaggedWords
 def debug(model_path: Path, test_data: Path, ignore_contractions: bool = True):
     lemmatizer: Lemmatizer = Lemmatizer.from_disk(model_path)
     tagged_words, lemmata = read_file(test_data, ignore_contractions)
-    predicted: List[Lemma] = [lemmatizer.lemmatize(tag, word, position) for tag, word, position in tagged_words]
+    predicted: List[Lemma] = [lemmatizer.lemmatize(tag, word, position == 0) for tag, word, position in tagged_words]
     for lemma, pred, (tag, word, position) in zip(lemmata, predicted, tagged_words):
         if lemma != pred:
             print(f"Wrong lemma for {word}[{tag}]: '{pred}', should be '{lemma}'")
@@ -47,7 +46,7 @@ def debug(model_path: Path, test_data: Path, ignore_contractions: bool = True):
 def evaluate(model_path: Path, test_data: Path, ignore_contractions: bool = True):
     lemmatizer: Lemmatizer = Lemmatizer.from_disk(model_path)
     tagged_words, lemmata = read_file(test_data, ignore_contractions)
-    predicted: List[Lemma] = [lemmatizer.lemmatize(tag, word, position) for tag, word, position in tagged_words]
+    predicted: List[Lemma] = [lemmatizer.lemmatize(tag, word, position == 0) for tag, word, position in tagged_words]
     accuracy = sum([gt == pred for gt, pred in zip(lemmata, predicted)]) / float(len(lemmata))
     print(f"Accuracy: {accuracy:.2%}")
 
@@ -61,7 +60,7 @@ def train(train_path: Path, model_path: Path, max_iterations: int = typer.Option
     lemmatizer: Lemmatizer = Lemmatizer()
     lemmatizer.fit(tagged_words, lemmata, max_iteration=max_iterations)
 
-    predicted: List[Lemma] = [lemmatizer.lemmatize(tag, word, position) for tag, word, position in tagged_words]
+    predicted: List[Lemma] = [lemmatizer.lemmatize(tag, word, position == 0) for tag, word, position in tagged_words]
     accuracy = sum([gt == pred for gt, pred in zip(lemmata, predicted)]) / float(len(lemmata))
     print(f"Accuracy: {accuracy:.2%}")
 

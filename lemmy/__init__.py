@@ -7,6 +7,7 @@ from spacy import Language
 from lemmy.lemmatizer import Lemmatizer
 
 
-@Language.factory("lemmy3", default_config={"data": None})
-def create(nlp: Language, name: str, data: Union[str, Path]) -> Lemmatizer:
-    return Lemmatizer
+# noinspection PyUnusedLocal
+@Language.factory("lemmy3")
+def create(nlp: Language, name: str, model_path: Union[str, Path]) -> "HunLemmatizer":
+    return Lemmatizer.from_disk(model_path)

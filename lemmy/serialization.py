@@ -23,7 +23,7 @@ class Serializable(abc.ABC, Generic[C]):
 
     @classmethod
     def from_bytes(cls, bytes_data: bytes) -> C:
-        msg = srsly.msgpack_loads(bytes_data)
+        msg = srsly.msgpack_loads(bytes_data, use_list=False)
         version = msg["_version"]
         if version != cls._version():
             raise TypeError(f"Incompatible versions: expected: {cls._version()} but got {version}")
@@ -34,11 +34,13 @@ class Serializable(abc.ABC, Generic[C]):
     def _from_bytes(cls, msg: Dict[str, Any]) -> C:
         raise NotImplementedError
 
+    # noinspection PyUnusedLocal
     def to_disk(self, path: Union[str, Path], exclude=tuple()) -> None:
         path = ensure_path(path)
         with path.open("wb") as file_:
             file_.write(self.to_bytes())
 
+    # noinspection PyUnusedLocal
     @classmethod
     def from_disk(cls, path: Union[str, Path], exclude=tuple()) -> C:
         path = ensure_path(path)
