@@ -5,9 +5,10 @@ import re
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Iterable, Tuple, List, Dict, Optional, TypeVar, Generic, Union, Any, NamedTuple
+from typing import Iterable, Tuple, List, Dict, Optional, TypeVar, Generic, Union, Any, NamedTuple, Pattern
 
-import spacy
+import spacy.tokens
+from spacy.tokens import Doc
 
 from lemmy.serialization import Serializable, C
 
@@ -167,6 +168,7 @@ class Lemmatizer(Serializable["Lemmatizer"]):  # pylint: disable=too-few-public-
     """Class for lemmatizing words. Inspired by the CST lemmatizer."""
 
     _logger = logging.getLogger(__name__)
+    _number_pattern: Pattern = re.compile(r"\d")
 
     @classmethod
     def _version(cls) -> int:
@@ -183,17 +185,21 @@ class Lemmatizer(Serializable["Lemmatizer"]):  # pylint: disable=too-few-public-
     def _from_bytes(cls, msg: Dict[str, Any]) -> "Lemmatizer":
         lemmatizer = Lemmatizer()
         lemmatizer._rule_repo = RuleRepository.from_bytes(msg["rule_repo"])
-        lemmatizer._lemma_counter = Counter[Lemma].from_bytes(msg["lemma_counter"])
+        lemmatizer._lemma_counter = Counter[Tuple[Token, Tag, Lemma]].from_bytes(msg["lemma_counter"])
         return lemmatizer
 
     def __init__(self):
         """Initialize a lemmatizer using specified set of rules."""
         self._rule_repo = RuleRepository()
-        self._lemma_counter: Counter[Lemma] = Counter[Lemma]()
+        self._lemma_counter: Counter[Tuple[Token, Tag, Lemma]] = Counter[Tuple[Token, Tag, Lemma]]()
 
-    def fit(self, tags_with_tokens: Iterable[Tuple[Tag, Token, Position]], lemmata: Iterable[Lemma], max_iteration: int = 20):
+    def fit(self, tags_with_tokens: Iterable[Tuple[Tag, Token, Position]], lemmata: Iterable[Lemma],
+            max_iteration: int = 20):
         """Train a lemmatizer on specified training data."""
-        self._lemma_counter.add_all(lemmata)
+        for (tag, token, _), lemma in zip(tags_with_tokens, lemmata):
+            token = self.__mask_numbers(token)
+            lemma = self.__mask_numbers(lemma)
+            self._lemma_counter.add((token, tag, lemma))
 
         old_rule_count = -1
         epoch = 1
@@ -272,15 +278,15 @@ class Lemmatizer(Serializable["Lemmatizer"]):  # pylint: disable=too-few-public-
         post_prune_count = len(self._rule_repo)
         self._logger.debug("rules after pruning: %s (%s removed)", post_prune_count, pre_prune_count - post_prune_count)
 
-    def lemmatize(self, tag: Tag, token: Token, position: Position, prev_tag: Optional[Tag] = None,
+    def lemmatize(self, tag: Tag, token: Token, is_sent_start: bool, prev_tag: Optional[Tag] = None,
                   disambiguate: bool = True) -> Union[Lemma, List[Lemma]]:
         """Return lemma for specified full form word of specified word class."""
-        token = self.__simple_true_casing(tag, token, position)
+        token = self._fix_casing(tag, token, is_sent_start)
         masked_token = self.__mask_numbers(token)
         rule: TokenTransformations = self._rule_repo.get_longest_matching_rule_for(tag, masked_token)
         predicted_lemmas: List[Lemma] = rule(masked_token)
 
-        lemma_candidates: List[Lemma] = predicted_lemmas #+ list(map(str.lower, predicted_lemmas))
+        lemma_candidates: List[Lemma] = predicted_lemmas  # + list(map(str.lower, predicted_lemmas))
 
         # Lemmatize using history. FIXME: most probably this never happens
         if prev_tag is not None and self._rule_repo.has_tag(prev_tag + "_" + tag):
@@ -300,8 +306,8 @@ class Lemmatizer(Serializable["Lemmatizer"]):  # pylint: disable=too-few-public-
 
         lemma: Lemma = self.disambiguate(tag, token, new_lemma_candidates)
 
-        if self._lemma_counter[lemma] <= 0 and self._lemma_counter[token] > 0:
-            lemma = token
+        # if self._lemma_counter[(token, tag, lemma)] <= 0:
+        #     lemma = token
 
         return lemma
 
@@ -311,7 +317,7 @@ class Lemmatizer(Serializable["Lemmatizer"]):  # pylint: disable=too-few-public-
         for candidate in lemma_candidates:
             if len(candidate) > len(token):
                 continue
-            count: int = self._lemma_counter[candidate]
+            count: int = self._lemma_counter[(self.__mask_numbers(token), tag, self.__mask_numbers(candidate))]
             if count > max_count:
                 lemma = candidate
                 max_count = count
@@ -319,19 +325,26 @@ class Lemmatizer(Serializable["Lemmatizer"]):  # pylint: disable=too-few-public-
         # noinspection PyUnboundLocalVariable
         return lemma
 
-    @staticmethod
-    def __simple_true_casing(tag: Tag, token: Token, position: Position) -> Token:
-        if position != 0:
-            return token
-        if token.islower():
-            return token
-        if tag != 'PROPN':
-            token = token.lower()
-        return token
+    def __call__(self, doc: Doc) -> Doc:
+        token: spacy.tokens.Token
+        for token in doc:
+            token.lemma_ = self.lemmatize(token.tag_, token.text, token.is_sent_start)
+        return doc
 
     @staticmethod
-    def __mask_numbers(token: Token) -> Token:
-        return re.sub(r'\d', '0', token)
+    def _fix_casing(tag: Tag, token: Token, is_sent_start: bool) -> Token:
+        if not is_sent_start:
+            return token
+        elif token.islower():
+            return token
+        elif tag != 'PROPN':
+            return token.lower()
+        else:
+            return token
+
+    @classmethod
+    def __mask_numbers(cls, token: Token) -> Token:
+        return cls._number_pattern.sub("0", token)
 
 
 def _find_suffix_start(token: Token, lemma: Lemma, min_rule_length: int) -> int:
